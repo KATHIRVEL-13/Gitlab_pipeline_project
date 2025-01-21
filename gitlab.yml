@@ -3,79 +3,85 @@ stages:
   - test
   - security
   - build
-  - docker
   - deploy
-install_mvn_tri_doc_kubectl:
-  stage: install_tools
-  script:
-    - sudo apt update  # Update package cache (optional)
-    - sudo apt -y install openjdk-17-jre-headless maven docker.io
-    - sudo chmod 666 /var/run/docker.sock
-    - curl -sL https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
-    - echo deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main | sudo tee /etc/apt/sources.list.d/trivy.list
-    - sudo apt update  # Update after adding repository (optional)
-    - sudo apt -y install trivy
-    - sudo snap install kubectl --classic
-  tags:
-    - self-hosted
+
+install_mvn_tri_doc_kubectl: # Inconsistent naming, should be install_tools
+stage: install_tools # Corrected stage name
+script:
+  - sudo apt update # Update package cache (optional, but good practice. Consider only running when necessary)
+  - sudo apt -y install openjdk-17-jre-headless maven docker.io # Installs Java, Maven, and Docker. Use a Docker image with these pre-installed for better consistency.
+  - sudo chmod 666 /var/run/docker.sock # **Major security risk!** Use `sudo usermod -aG docker $USER` (inside a Docker image).
+  - # Trivy installation using apt-key is deprecated. Use the official method from Trivy's documentation.
+  - echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/trivy.list # Correct way to add Trivy repo
+  - sudo apt update # Update after adding repository (optional)
+  - sudo apt -y install trivy # Install Trivy
+  - sudo snap install kubectl classic # Install kubectl. Consider a specific version or Docker image.
+tags:
+  - self-hosted
+
 unit_testing:
-  stage: test
-  script:
-    - mvn test
-  tags:
-    - self-hosted
-trivy_fs_scan:
-  stage: security
-  script:
-    - trivy fs --format table -o fs.html .
-  tags:
-    - self-hosted
+stage: test
+script:
+  - mvn test # Runs Maven tests
+tags:
+  - self-hosted
+
+trivy_is_scan: # Typo: should be trivy_scan
+stage: security
+script:
+  - trivy fs --format table --output report.html . # Scans the filesystem. Scan the Docker image instead.
+tags:
+  - self-hosted
+
 sonarqube-check:
-  stage: security
-  image: 
-    name: sonarsource/sonar-scanner-cli:latest
-  variables:
-    SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"  # Defines the location of the analysis task cache
-    GIT_DEPTH: "0"  #Tells git to fetch all the branches of the project, required by the analysis task
-  cache:
-    key: "${CI_JOB_NAME}"
-    paths:
-      - .sonar/cache
-  script: 
-    - sonar-scanner
-  allow_failure: true
-  only:
-    - main
-build_app:
-  stage: build
-  script:
-    - mvn package
-  tags:
-    - self-hosted
-  only:
-    - main
-build_and_tag_image:
-  stage: build
-  script:
-    - docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
-    - mvn package
-    - docker build -t kathirvel13/boardgitlab:latest .
-    - docker push kathirvel13/boardgitlab:latest 
-  tags:
-    - self-hosted
-  only:
-    - main
-k8s-deploy:
-  stage: deploy
-  variables:
-    KUBECONFIG_PATH: /home/ubuntu/.kube/config
-  before_script:
-    - mkdir -p $(dirname "$KUBECONFIG_PATH")
-    - echo "$KUBECONFIG_CONTENT" | base64 -d > "$KUBECONFIG_PATH"
-    - export KUBECONFIG="$KUBECONFIG_PATH"
-  script:
-    - kubectl apply -f deployment-service.yaml
-  tags:
-    - self-hosted
-  only:
-    - main
+stage: security
+image:
+  name: sonarsource/sonar-scanner-cli:latest
+variables:
+  SONAR_USER_HOME: "$CI_PROJECT_DIR/.sonar" # Defines the SonarQube cache. Good. Use $CI_PROJECT_DIR
+  GIT_DEPTH: 0 # Fetches all Git history, required for SonarQube. Important.
+cache:
+  key: "$CI_JOB_NAME" # Use $CI_JOB_NAME for cache key
+  paths:
+    - .sonar/cache
+script:
+  - sonar-scanner # Runs SonarQube scanner
+allow_failure: true # Allows pipeline to continue even if SonarQube fails.
+only:
+  - main # Runs only on main branch
+
+build_app: # Inconsistent naming, should be build
+stage: build
+script:
+  - mvn package # Packages the application
+tags:
+  - self-hosted
+only:
+  - main
+
+build_and_tag_image: # Inconsistent naming, should be build_image
+stage: build # Consider a separate stage for building the image
+script:
+  - docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD" # Logs in to Docker registry. Use CI/CD variables.
+  - mvn package #Should not be here, should be in a previous job
+  - docker build -t kathirvel13/boardgitlab:latest . # Builds Docker image. Use specific tags, not latest.
+  - docker push kathirvel13/boardgitlab:latest # Pushes the image.
+tags:
+  - self-hosted
+only:
+  - main
+
+k8s_deploy:
+stage: deploy
+variables:
+  KUBECONFIG_PATH: /home/ubuntu/.kube/config # **Never hardcode!** Use CI/CD variables and secure file handling.
+before_script:
+  - mkdir -p "$(dirname "$KUBECONFIG_PATH")" # Creates the directory. Good.
+  - echo "$KUBECONFIG_CONTENT" | base64 -d > "$KUBECONFIG_PATH" # Decodes the kubeconfig. Good. Use CI/CD variable $KUBECONFIG_CONTENT
+  - export KUBECONFIG="$KUBECONFIG_PATH" # Sets the KUBECONFIG environment variable.
+script:
+  - kubectl apply -f deployment-service.yaml # Applies Kubernetes deployment.
+tags:
+  - self-hosted
+only:
+  - main
